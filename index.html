@@ -70,6 +70,9 @@ input:focus,select:focus,textarea:focus{outline:2px solid #1f6f4a;outline-offset
 .spoiler table{width:100%;border-collapse:collapse;font-size:14px}
 .spoiler td{padding:6px 4px;border-bottom:1px solid #ece7de}
 details.adv summary{cursor:pointer;color:#6b706c;font-size:14px}
+.tpl-row{display:flex;gap:8px}.tpl-row input{flex:1}@media (max-width:520px){.tpl-row{flex-direction:column}}
+.tpl{display:flex;align-items:center;gap:8px;border:1px solid #ece7de;border-radius:12px;padding:8px 10px;margin-top:8px}
+.tpl .tn{flex:1;min-width:0}.tpl .tn b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tpl .tn span{font-size:13px;color:#6b706c}
 .foot{color:#8a8f8b;font-size:12px;text-align:center;margin-top:18px}
 .modal{position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(10,14,20,.5);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
 .modal .card{max-width:420px;width:100%}
@@ -239,6 +242,15 @@ details.adv summary{cursor:pointer;color:#6b706c;font-size:14px}
   <p class="sub">Wpisz osoby, ustaw wykluczenia i wylosuj. Każdy dostanie własny link z wynikiem — bez logowania.</p>
 
   <section class="card">
+    <h2>📁 Szablony</h2>
+    <p class="hint">Zapisz osoby, reguły, tematykę i wygląd, żeby za rok lub przy innym losowaniu wczytać je jednym kliknięciem. Wyniki nie są zapisywane w szablonie.</p>
+    <div class="tpl-row"><input type="text" id="tplName" maxlength="40" placeholder="Nazwa szablonu, np. Rodzina Kowalskich" aria-label="Nazwa szablonu">
+      <button class="btn sm green" id="tplSave">Zapisz obecne ustawienia</button></div>
+    <p class="status" id="tplMsg"></p>
+    <div id="tplList"></div>
+  </section>
+
+  <section class="card">
     <h2>1. Wydarzenie</h2>
     <label class="f" for="evName">Nazwa (opcjonalnie)</label>
     <input type="text" id="evName" maxlength="50" placeholder="np. Wigilia u Kowalskich">
@@ -297,6 +309,8 @@ details.adv summary{cursor:pointer;color:#6b706c;font-size:14px}
     <p class="hint">Skopiuj link i wyślij go danej osobie dowolnym komunikatorem. Każdy link pokazuje wynik jednej osoby — jeśli sam bierzesz udział, nie otwieraj cudzych.</p>
     <div id="resList"></div>
     <div class="toolbar">
+      <button class="btn sm green" id="copyList">📋 Kopiuj listę do rozsyłania</button>
+      <button class="btn sm" id="exportList">📨 Pobierz listę do rozsyłania (.txt)</button>
       <button class="btn sm" id="exportJson">💾 Zapisz kopię wyników</button>
       <button class="btn sm" id="exportTxt">📄 Zapisz listę linków (.txt)</button>
       <button class="btn sm" id="showSpoiler">Pokaż wszystkie pary (spoiler)</button>
@@ -783,7 +797,7 @@ function fileBase(){ const d = new Date(), z = n => String(n).padStart(2, '0');
 async function confirmSpoiler(){ return ask('Zapisać plik z wynikami?', 'Plik zawiera wszystkie pary. Jeśli bierzesz udział, nie otwieraj go — to tylko kopia na wypadek, gdyby ktoś zgubił link.'); }
 $('#exportJson').onclick = async () => {
   if (!(await confirmSpoiler())) return;
-  download(fileBase() + '.json', JSON.stringify({app:'losowanie-prezentow', version:3, exportedAt:new Date().toISOString(), state}, null, 2), 'application/json');
+  download(fileBase() + '.json', JSON.stringify({app:'losowanie-prezentow', version:3, exportedAt:new Date().toISOString(), state, templates:tplGet()}, null, 2), 'application/json');
 };
 $('#exportTxt').onclick = async () => {
   if (!(await confirmSpoiler())) return;
@@ -799,6 +813,9 @@ $('#importFile').onchange = async e => {
   if (!obj || obj.app !== 'losowanie-prezentow' || !obj.state){ $('#importErr').textContent = 'To nie jest plik kopii z tej aplikacji.'; return; }
   if (!(await ask('Wczytać kopię?', 'Zastąpi obecne osoby, ustawienia i wyniki na tym urządzeniu.'))) return;
   state = normalizeState(obj.state); save();
+  if (Array.isArray(obj.templates)){ const cur = tplGet();
+    obj.templates.filter(t => t && typeof t.name === 'string' && t.data).forEach(t => { if (!cur.some(c => c.name === t.name)) cur.push(t); });
+    tplSet(cur); renderTemplates(); }
   bindFields(); renderMotifs(); renderPeople(); renderRules(); checkFeas(); renderResults();
   if (state.last) $('#results').scrollIntoView({behavior:'smooth', block:'start'});
 };
@@ -831,7 +848,56 @@ function route(){
   $('#org').classList.remove('hidden');
 }
 addEventListener('hashchange', route);
-bindFields(); renderMotifs(); renderPeople(); renderRules(); checkFeas(); renderResults(); route();
+/* ---------------- lista do rozsyłania (bez wyników) ---------------- */
+function sendList(){
+  const ev = (state.ev.name || '').trim();
+  const L = [`Losowanie prezentów${ev ? ' — ' + ev : ''} 🎄`, 'Każdy otwiera tylko swój link:', ''];
+  state.last.forEach(x => L.push(`${x.name}: ${linkOf(x)}`));
+  return L.join('\n');
+}
+$('#copyList').onclick = e => copy(sendList(), e.target);
+$('#exportList').onclick = () => download(fileBase() + '-lista-linkow.txt', sendList().replace(/\n/g, '\r\n'), 'text/plain;charset=utf-8');
+
+/* ---------------- szablony ---------------- */
+const TPL = 'losowanie-szablony';
+function tplGet(){ try { const v = JSON.parse(localStorage.getItem(TPL)); return Array.isArray(v) ? v : []; } catch(e){ return []; } }
+function tplSet(v){ try { localStorage.setItem(TPL, JSON.stringify(v)); return true; } catch(e){ return false; } }
+function tplMsg(t, ok){ const el = $('#tplMsg'); el.className = 'status ' + (ok ? 'ok' : 'bad'); el.textContent = t; clearTimeout(tplMsg.t); tplMsg.t = setTimeout(() => el.textContent = '', 3500); }
+function renderTemplates(){
+  const list = tplGet().sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
+  $('#tplList').innerHTML = list.length ? '' : '<p class="hint" style="margin:8px 0 0">Brak zapisanych szablonów.</p>';
+  list.forEach(t => {
+    const n = (t.data.people || []).filter(p => p && p.name).length;
+    const d = document.createElement('div'); d.className = 'tpl';
+    d.innerHTML = `<div class="tn"><b>${esc(t.name)}</b><span>${n} os. · ${esc(t.data.themeText || 'bez tematyki')}${t.savedAt ? ' · ' + new Date(t.savedAt).toLocaleDateString('pl-PL') : ''}</span></div>
+      <button class="btn sm green">Wczytaj</button><button class="x" title="Usuń" aria-label="Usuń szablon ${esc(t.name)}">×</button>`;
+    const [, load, del] = d.children;
+    load.onclick = async () => {
+      if (!(await ask('Wczytać szablon „' + t.name + '”?', 'Zastąpi obecne osoby i ustawienia. Ostatnie wyniki losowania zostaną wyczyszczone — zapisz kopię, jeśli są Ci potrzebne.'))) return;
+      state = normalizeState(Object.assign({}, t.data, {useShort: state.useShort, base: state.base, last: null})); save();
+      bindFields(); renderMotifs(); renderPeople(); renderRules(); checkFeas(); renderResults();
+      tplMsg('✓ Wczytano „' + t.name + '”', true);
+    };
+    del.onclick = async () => {
+      if (!(await ask('Usunąć szablon „' + t.name + '”?', 'Tego nie da się cofnąć.'))) return;
+      tplSet(tplGet().filter(x => x.name !== t.name)); renderTemplates();
+    };
+    $('#tplList').appendChild(d);
+  });
+}
+$('#tplSave').onclick = async () => {
+  const name = $('#tplName').value.trim() || (state.ev.name || '').trim();
+  if (!name){ tplMsg('Wpisz nazwę szablonu.', false); $('#tplName').focus(); return; }
+  if (!names().some(Boolean)){ tplMsg('Dodaj najpierw uczestników.', false); return; }
+  const list = tplGet(), exists = list.some(t => t.name === name);
+  if (exists && !(await ask('Nadpisać szablon „' + name + '”?', 'Szablon o tej nazwie już istnieje.'))) return;
+  const data = JSON.parse(JSON.stringify({ev: state.ev, themeText: state.themeText, motif: state.motif, people: state.people, rules: state.rules, noMutual: state.noMutual}));
+  const ok = tplSet(list.filter(t => t.name !== name).concat({name, savedAt: new Date().toISOString(), data}));
+  if (!ok){ tplMsg('Nie udało się zapisać (przeglądarka blokuje zapis).', false); return; }
+  $('#tplName').value = ''; renderTemplates(); tplMsg('✓ Zapisano szablon „' + name + '”', true);
+};
+
+bindFields(); renderMotifs(); renderPeople(); renderRules(); checkFeas(); renderResults(); renderTemplates(); route();
 
 // do testów automatycznych
 window.__losowanie = {encodeToken, decodeToken, buildAllowed, draw, valid, backtrack, daysTo, countdown};
